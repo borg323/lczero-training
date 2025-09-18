@@ -145,14 +145,13 @@ class Net:
     def fill_layer_v2(self, layer, params):
         """Normalize and populate 16bit layer in protobuf"""
         params = params.flatten().astype(np.float32)
-        if len(params) == 1:
-            layer.min_val = 0 if len(params) == 1 else float(np.min(params))
-            layer.max_val = 1 if len(params) == 1 and np.max(
-                params) == 0 else float(np.max(params))
+        if np.max(params) == np.min(params): # add check for linear16 here
+            layer.min_val = float(np.min(params))
+            layer.max_val = float(np.max(params))
             if layer.max_val == layer.min_val:
                 # Avoid division by zero if max == min.
                 params = (params - layer.min_val)
-            else:
+            else: # linear16
                 params = (params - layer.min_val) / (layer.max_val - layer.min_val)
             params *= 0xffff
             params = np.round(params)

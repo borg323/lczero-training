@@ -7,7 +7,7 @@ import numpy as np
 import proto.net_pb2 as pb
 
 LC0_MAJOR = 0
-LC0_MINOR = 21
+LC0_MINOR = 33
 LC0_MINOR_WITH_INPUT_TYPE_3 = 25
 LC0_MINOR_WITH_INPUT_TYPE_4 = 26
 LC0_MINOR_WITH_INPUT_TYPE_5 = 27
@@ -43,7 +43,6 @@ class Net:
         self.pb.min_version.major = LC0_MAJOR
         self.pb.min_version.minor = LC0_MINOR
         self.pb.min_version.patch = LC0_PATCH
-        self.pb.format.weights_encoding = pb.Format.LINEAR16
 
         self.weights = []
 
@@ -146,32 +145,27 @@ class Net:
     def fill_layer_v2(self, layer, params):
         """Normalize and populate 16bit layer in protobuf"""
         params = params.flatten().astype(np.float32)
-        layer.min_val = 0 if len(params) == 1 else float(np.min(params))
-        layer.max_val = 1 if len(params) == 1 and np.max(
-            params) == 0 else float(np.max(params))
-        if layer.max_val == layer.min_val:
-            # Avoid division by zero if max == min.
-            params = (params - layer.min_val)
+        if len(params) == 1:
+            layer.min_val = 0 if len(params) == 1 else float(np.min(params))
+            layer.max_val = 1 if len(params) == 1 and np.max(
+                params) == 0 else float(np.max(params))
+            if layer.max_val == layer.min_val:
+                # Avoid division by zero if max == min.
+                params = (params - layer.min_val)
+            else:
+                params = (params - layer.min_val) / (layer.max_val - layer.min_val)
+            params *= 0xffff
+            params = np.round(params)
+            layer.params = params.astype(np.uint16).tobytes()
+            layer.encoding = pb.Weights.Layer.LINEAR16
         else:
-            params = (params - layer.min_val) / (layer.max_val - layer.min_val)
-        params *= 0xffff
-        params = np.round(params)
-        layer.params = params.astype(np.uint16).tobytes()
-
+            layer.min_val = 0
+            layer.max_val = 0
+            layer.params = params.astype(np.float16).tobytes()
+            layer.encoding = pb.Weights.Layer.FLOAT16
     def fill_layer(self, layer, weights):
-        """Normalize and populate 16bit layer in protobuf"""
         params = np.array(weights.pop(), dtype=np.float32)
-        layer.min_val = 0 if len(params) == 1 else float(np.min(params))
-        layer.max_val = 1 if len(params) == 1 and np.max(
-            params) == 0 else float(np.max(params))
-        if layer.max_val == layer.min_val:
-            # Avoid division by zero if max == min.
-            params = (params - layer.min_val)
-        else:
-            params = (params - layer.min_val) / (layer.max_val - layer.min_val)
-        params *= 0xffff
-        params = np.round(params)
-        layer.params = params.astype(np.uint16).tobytes()
+        self.fill_layer_v2(layer, params)
 
     def fill_conv_block(self, convblock, weights, gammas):
         """Normalize and populate 16bit convblock in protobuf"""
@@ -613,9 +607,6 @@ class Net:
         self.fill_net(weights)
 
     def fill_net_v2(self, all_weights):
-        # all_weights is array of [name of weight, numpy array of weights].
-        self.pb.format.weights_encoding = pb.Format.LINEAR16
-
         has_renorm = any('renorm' in w[0] for w in all_weights)
         weight_names = [w[0] for w in all_weights]
 
@@ -712,7 +703,6 @@ class Net:
             raise ValueError("Inconsistent number of weights in the file")
         blocks //= ws['residual']
 
-        self.pb.format.weights_encoding = pb.Format.LINEAR16
         self.fill_layer(self.pb.weights.ip2_val_b, weights)
         self.fill_layer(self.pb.weights.ip2_val_w, weights)
         self.fill_layer(self.pb.weights.ip1_val_b, weights)
